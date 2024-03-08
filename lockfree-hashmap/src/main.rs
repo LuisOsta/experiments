@@ -5,6 +5,16 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::{ptr, thread};
 
+/**
+ * Things we need to support:
+ * * Resizing (to deal with bucket lengths getting too long and which will cause hash collisions)
+ * * Garbage collection ( This and the above will require keeping track of writers and readers)
+ * * Unique enforcement - Done
+ * * Iterable support - Done
+ * * Internal mutability support - In Progress
+ *
+ */
+
 const INITIAL_CAPACITY: usize = 16;
 
 type BucketValue<V> = Arc<RwLock<V>>;
@@ -80,15 +90,6 @@ where
     }
 }
 
-/**
- * Things we need to support:
- * * Resizing (to deal with bucket lengths getting too long and which will cause hash collisions)
- * * Garbage collection ( This and the above will require keeping track of writers and readers)
- * * Unique enforcement - Done
- * * Iterable support - Done
- * * Internal mutability support
- *
- */
 impl<K, V> ConcurrentHashMap<K, V>
 where
     K: Eq + std::hash::Hash + Clone + Debug,
