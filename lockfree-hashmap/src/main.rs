@@ -2,14 +2,14 @@ use std::collections::HashSet;
 use std::hash::Hasher;
 use std::slice::Iter;
 use std::sync::atomic::{AtomicPtr, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::{ptr, thread};
 
 const INITIAL_CAPACITY: usize = 16;
 
 pub struct BucketItem<K, V> {
     key: K,
-    value: V,
+    value: Arc<RwLock<V>>,
     next: AtomicPtr<BucketItem<K, V>>,
 }
 
@@ -45,7 +45,7 @@ impl<K, V> IntoIterator for ConcurrentHashMap<K, V> {
 impl<K, V> ConcurrentHashMap<K, V>
 where
     K: Eq + std::hash::Hash + std::fmt::Debug,
-    V: Clone + std::fmt::Debug,
+    V: std::fmt::Debug,
 {
     pub fn new() -> Self {
         let mut buckets = Vec::with_capacity(INITIAL_CAPACITY);
@@ -63,7 +63,7 @@ where
         let index = self.get_bucket_slot(&key);
         let new_bucket_item = Box::into_raw(Box::new(BucketItem {
             key: key,
-            value,
+            value: Arc::new(RwLock::new(value)),
             next: AtomicPtr::new(ptr::null_mut()),
         }));
 
@@ -73,14 +73,22 @@ where
         }
     }
 
+    pub fn remove(&self, key: K) {
+        todo!()
+    }
+
+    pub fn get_mut(&self, key: K) -> Option<Arc<RwLock<V>>> {
+        todo!()
+    }
+
     /**
-     *
+     * `insert_new_key` assumes that there are no bucket items in the bucket at `index` with the same key as `new_bucket_item`.
+     * It will attempt to append to the front of the LinkedList at bucket `index` the bucket item `new_bucket_item` until it succeeds.
+     * Utilizes the atomic operation `compare_exchange` to handle the list mutations. If the `compare_exchange` operation fails it will continue to retry until it succeeds
      */
     fn insert_new_key(&self, new_bucket_item: *mut BucketItem<K, V>, index: usize) {
         let mut head = self.buckets[index].load(Ordering::SeqCst);
         loop {
-            // In the case that the key value does not already exist in the linkedlist in the bucket at `index`.
-            // Then add the new_bucket_item to the front of the linkedlist and update the pointer at buckets[index]
             unsafe { (*new_bucket_item).next.store(head, Ordering::SeqCst) };
             match self.buckets[index].compare_exchange(
                 head,
@@ -146,19 +154,22 @@ where
                         }
                     }
                 } else {
-                    // Set prev.next to new_bucket_item if prev is not null.
-                    let prev_node = unsafe { &*prev };
+                    // There was an existing BucketItem with a matching key but it was not the first item in the bucket. So it's somewhere within the list.
 
-                    match prev_node.next.compare_exchange(
+                    // Set prev.next to new_bucket_item if prev is not null.
+                    let raw_prev = unsafe { &*prev };
+
+                    match raw_prev.next.compare_exchange(
                         current,
                         new_bucket_item,
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                     ) {
                         Ok(_) => return Ok(()), // Successfully inserted
-                        Err(new_head) => {
+                        Err(actual_next) => {
+                            // actual_next is what the pointer for the element after the previous bucket item is in reality (`current` was incorrect)
                             // The value in buckets[index] was updated in between the load and compare_exchange and you must restart
-                            current = new_head;
+                            current = actual_next;
                             continue;
                         }
                     }
@@ -176,7 +187,7 @@ where
      * We really don't want to return a reference as that's error prone and will make garbage collection much harder in the future
      * This is intentional append-only but we may need to add garbage collection in the future
      */
-    pub fn get(&self, key: &K) -> Option<V> {
+    pub fn get(&self, key: &K) -> Option<Arc<RwLock<V>>> {
         let index = self.get_bucket_slot(key);
         let mut current = self.buckets[index].load(Ordering::SeqCst);
 
@@ -248,7 +259,7 @@ fn main() {
         for i in 0..1000 {
             let key = format!("key{}", i);
             if let Some(value) = map_clone.get(&key) {
-                let _v = value.clone();
+                let _v = value.write().unwrap();
                 r.lock().unwrap().insert(key);
             }
         }
