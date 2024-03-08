@@ -8,6 +8,7 @@ use std::{ptr, thread};
 const INITIAL_CAPACITY: usize = 16;
 
 type BucketValue<V> = Arc<RwLock<V>>;
+struct AtomicBucketItem<K, V>(AtomicPtr<BucketItem<K, V>>);
 
 #[derive(Debug)]
 struct BucketItem<K, V> {
@@ -15,8 +16,6 @@ struct BucketItem<K, V> {
     value: BucketValue<V>,
     next: AtomicPtr<BucketItem<K, V>>,
 }
-
-struct AtomicBucketItem<K, V>(AtomicPtr<BucketItem<K, V>>);
 
 pub struct ExternalBucketItem<K, V> {
     key: K,
@@ -86,7 +85,7 @@ where
  * * Resizing (to deal with bucket lengths getting too long and which will cause hash collisions)
  * * Garbage collection ( This and the above will require keeping track of writers and readers)
  * * Unique enforcement - Done
- * * Iterable support
+ * * Iterable support - Done
  * * Internal mutability support
  *
  */
