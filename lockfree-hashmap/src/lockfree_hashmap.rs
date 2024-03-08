@@ -27,6 +27,15 @@ where
     capacity: usize,
 }
 
+impl<K, V> Default for ConcurrentHashMap<K, V>
+where
+    K: Eq + std::hash::Hash + Clone + Debug,
+{
+    fn default() -> Self {
+        Self::new(INITIAL_CAPACITY)
+    }
+}
+
 impl<'a, K, V> ConcurrentHashMap<K, V>
 where
     K: Eq + std::hash::Hash + Clone + Debug,
@@ -45,15 +54,15 @@ impl<K, V> ConcurrentHashMap<K, V>
 where
     K: Eq + std::hash::Hash + Clone + Debug,
 {
-    pub fn new() -> Self {
-        let mut buckets = Vec::with_capacity(INITIAL_CAPACITY);
-        for _ in 0..INITIAL_CAPACITY {
+    pub fn new(capacity: usize) -> Self {
+        let mut buckets = Vec::with_capacity(capacity);
+        for _ in 0..capacity {
             buckets.push(AtomicBucketItem(AtomicPtr::new(ptr::null_mut())));
         }
 
         ConcurrentHashMap {
             buckets,
-            capacity: INITIAL_CAPACITY,
+            capacity: capacity,
         }
     }
 

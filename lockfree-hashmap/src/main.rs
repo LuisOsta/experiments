@@ -11,7 +11,7 @@ fn main() {
     // Thread pinning may be necessary in order to see true race conditions for test
 
     // Create a shared ConcurrentHashMap
-    let map = Arc::new(ConcurrentHashMap::new());
+    let map = Arc::new(ConcurrentHashMap::default());
     // Create a HashSet to store results
     let results: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
@@ -52,7 +52,7 @@ fn main() {
     assert_eq!(results.len(), 1000);
     println!("Test passed!");
 
-    let map_two = Arc::new(ConcurrentHashMap::new());
+    let map_two = Arc::new(ConcurrentHashMap::default());
 
     let key = "test".to_string();
     map_two.insert(key.clone(), "hello".to_string());
