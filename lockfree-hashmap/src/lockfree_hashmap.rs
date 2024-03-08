@@ -13,7 +13,7 @@ use std::sync::{Arc, RwLock};
  * * Garbage collection ( This and the above will require keeping track of writers and readers)
  * * Unique enforcement - Done
  * * Iterable support - Done
- * * Internal mutability support - In Progress
+ * * Internal mutability support - Done
  *
  */
 
@@ -66,6 +66,9 @@ where
         }
     }
 
+    /**
+     *
+     */
     pub fn insert(&self, key: K, value: V) {
         let index = self.get_bucket_slot(&key);
         let new_bucket_item = Box::into_raw(Box::new(BucketItem {
@@ -80,6 +83,9 @@ where
         }
     }
 
+    /**
+     *
+     */
     pub fn remove(&self, _key: K) {
         todo!()
     }
