@@ -49,64 +49,16 @@ where
             next: AtomicPtr::new(ptr::null_mut()),
         }));
 
-        let mut head = self.buckets[index].load(Ordering::SeqCst);
-
-        // How do you enforce uniqueness
-        // Keep track of head pointer & iterate through the list to see if your key value is already there
-        // If found then compare_exchange that pointer, otherwise compare_exchange head pointer as is
-        // If fail to compare exchange, repeat algo
-
-        let mut prev = ptr::null_mut::<Node<K, V>>();
-        let mut current = head;
-
-        while !current.is_null() {
-            let node = unsafe { &*current };
-            let next_node = node.next.load(Ordering::SeqCst);
-            if node.key.eq(&key) {
-                // Change the next value of new node
-                unsafe { (*new_node).next.store(next_node, Ordering::SeqCst) };
-
-                // If prev is equal to null it means that the key of `head` is the same as the key of new_node
-                if prev.is_null() {
-                    match self.buckets[index].compare_exchange(
-                        head,
-                        new_node,
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                    ) {
-                        Ok(_) => return, // Successfully inserted
-                        Err(new_head) => {
-                            // The value in buckets[index] was updated in between the load and compare_exchange and you must restart
-                            current = new_head;
-                            head = new_head;
-                            continue;
-                        }
-                    }
-                } else {
-                    // Set prev.next to new_node if prev is not null.
-                    let prev_node = unsafe { &*prev };
-
-                    match prev_node.next.compare_exchange(
-                        current,
-                        new_node,
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                    ) {
-                        Ok(_) => return, // Successfully inserted
-                        Err(new_head) => {
-                            // The value in buckets[index] was updated in between the load and compare_exchange and you must restart
-                            current = new_head;
-                            head = new_head;
-                            continue;
-                        }
-                    }
-                }
-            }
-
-            prev = current;
-            current = node.next.load(Ordering::SeqCst);
+        if self.update_existing_key(new_node, index).is_err() {
+            self.insert_new_key(new_node, index);
         }
+    }
 
+    /**
+     *
+     */
+    fn insert_new_key(&self, new_node: *mut Node<K, V>, index: usize) {
+        let mut head = self.buckets[index].load(Ordering::SeqCst);
         loop {
             //new node: k: 3, value 5
             //head: k 2, value 5, next: k: 3, value 10
@@ -138,7 +90,14 @@ where
         }
     }
 
-    fn insert_existing(&self, new_node: *mut Node<K, V>, index: usize) -> Result<(), ()> {
+    // How do you enforce uniqueness
+    // Keep track of head pointer & iterate through the list to see if your key value is already there
+    // If found then compare_exchange that pointer, otherwise compare_exchange head pointer as is
+    // If fail to compare exchange, repeat algo
+    /**
+     *
+     */
+    fn update_existing_key(&self, new_node: *mut Node<K, V>, index: usize) -> Result<(), ()> {
         let key = unsafe { &(*new_node).key };
         let head = self.buckets[index].load(Ordering::SeqCst);
         let mut prev = ptr::null_mut::<Node<K, V>>();
