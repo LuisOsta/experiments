@@ -317,7 +317,8 @@ fn main() {
 
     for b in map_two.iter() {
         println!("Node Key: {:#?}. Node Value: {:#?}", b.key, b.value);
-        let value = b.value.read().unwrap();
+        let mut value = b.value.write().unwrap();
+        value.push('m');
         map_two.insert("test3".to_string(), value.clone());
     }
     println!("\n\n");
