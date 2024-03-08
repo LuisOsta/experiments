@@ -26,8 +26,8 @@ pub struct ConcurrentHashMap<K, V> {
  */
 impl<K, V> ConcurrentHashMap<K, V>
 where
-    K: Eq + std::hash::Hash + Clone,
-    V: Clone,
+    K: Eq + std::hash::Hash + std::fmt::Debug,
+    V: Clone + std::fmt::Debug,
 {
     pub fn new() -> Self {
         let mut buckets = Vec::with_capacity(INITIAL_CAPACITY);
@@ -44,12 +44,13 @@ where
     pub fn insert(&self, key: K, value: V) {
         let index = self.get_bucket_slot(&key);
         let new_node = Box::into_raw(Box::new(Node {
-            key: key.clone(),
+            key: key,
             value,
             next: AtomicPtr::new(ptr::null_mut()),
         }));
 
         if self.update_existing_key(new_node, index).is_err() {
+            // no current bucket item has the new_node key, so add new key via new_node
             self.insert_new_key(new_node, index);
         }
     }
@@ -60,10 +61,6 @@ where
     fn insert_new_key(&self, new_node: *mut Node<K, V>, index: usize) {
         let mut head = self.buckets[index].load(Ordering::SeqCst);
         loop {
-            //new node: k: 3, value 5
-            //head: k 2, value 5, next: k: 3, value 10
-            //k=3, k=2, k=3
-
             // In the case that the key value does not already exist in the linkedlist in the bucket at `index`.
             // Then add the new_node to the front of the linkedlist and update the pointer at buckets[index]
             unsafe { (*new_node).next.store(head, Ordering::SeqCst) };
@@ -90,12 +87,13 @@ where
         }
     }
 
-    // How do you enforce uniqueness
-    // Keep track of head pointer & iterate through the list to see if your key value is already there
-    // If found then compare_exchange that pointer, otherwise compare_exchange head pointer as is
-    // If fail to compare exchange, repeat algo
     /**
+     * Returns Ok if a bucket item with the same key as new_node is found, otherwise returns an error if no bucket item with the same key is found.
      *
+     * Gets the bucket at `index`, then iterates through the LinkedIn starting at the head of the bucket.
+     * Starts by setting a current node to `head` and then iterating to the list, trying to find any bucket item that has the same key as `new_node`
+     * If it finds a bucket item with the same key, it will use `prev` and `current` as needed to replace that bucket item with the `new_node` pointer.
+     * Utilize the atomic operation `compare_exchange` to handle the list mutations. If the `compare_exchange` operation fails it will continue to retry until it succeeds
      */
     fn update_existing_key(&self, new_node: *mut Node<K, V>, index: usize) -> Result<(), ()> {
         let key = unsafe { &(*new_node).key };
@@ -148,6 +146,7 @@ where
             prev = current;
             current = node.next.load(Ordering::SeqCst);
         }
+
         Err(())
     }
 
@@ -181,6 +180,19 @@ where
         let hash = self.hash(&key);
         return hash % self.capacity;
     }
+
+    pub fn print(&self) {
+        for bucket in self.buckets.iter() {
+            let mut current = bucket.load(Ordering::SeqCst);
+
+            while !current.is_null() {
+                let node = unsafe { &*current };
+                println!("Node Key: {:#?}. Node Value: {:#?}", node.key, node.value);
+
+                current = node.next.load(Ordering::SeqCst);
+            }
+        }
+    }
 }
 
 fn main() {
@@ -189,7 +201,6 @@ fn main() {
 
     // Create a shared ConcurrentHashMap
     let map = Arc::new(ConcurrentHashMap::new());
-
     // Create a HashSet to store results
     let results: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
@@ -210,10 +221,11 @@ fn main() {
 
     // Thread 2: Retrieves values from the map
     let r = results_clone.clone();
+    let map_clone = map.clone();
     let thread2 = thread::spawn(move || {
         for i in 0..1000 {
             let key = format!("key{}", i);
-            if let Some(value) = map.get(&key) {
+            if let Some(value) = map_clone.get(&key) {
                 let _v = value.clone();
                 r.lock().unwrap().insert(key);
             }
@@ -228,4 +240,14 @@ fn main() {
     let results = results.lock().unwrap();
     assert_eq!(results.len(), 1000);
     println!("Test passed!");
+
+    let map_two = Arc::new(ConcurrentHashMap::new());
+
+    let key = "test".to_string();
+    map_two.insert(key.clone(), "hello".to_string());
+    map_two.print();
+    println!("First: {:?}", map_two.get(&key));
+    map_two.insert(key.clone(), "world".to_string());
+    println!("Second: {:?}", map_two.get(&key));
+    map_two.print();
 }
