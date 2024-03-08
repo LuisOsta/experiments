@@ -1,35 +1,83 @@
 use std::collections::HashSet;
+use std::fmt::Debug;
 use std::hash::Hasher;
-use std::slice::Iter;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::{ptr, thread};
 
 const INITIAL_CAPACITY: usize = 16;
 
-pub struct BucketItem<K, V> {
+type BucketValue<V> = Arc<RwLock<V>>;
+
+#[derive(Debug)]
+struct BucketItem<K, V> {
     key: K,
-    value: Arc<RwLock<V>>,
+    value: BucketValue<V>,
     next: AtomicPtr<BucketItem<K, V>>,
 }
 
-pub struct ConcurrentHashMap<K, V> {
-    buckets: Vec<AtomicPtr<BucketItem<K, V>>>,
+struct AtomicBucketItem<K, V>(AtomicPtr<BucketItem<K, V>>);
+
+pub struct ExternalBucketItem<K, V> {
+    key: K,
+    value: BucketValue<V>,
+}
+
+pub struct ConcurrentHashMapIter<'a, K, V> {
+    current: Option<&'a AtomicPtr<BucketItem<K, V>>>,
+}
+
+pub struct ConcurrentHashMap<K, V>
+where
+    K: Eq + std::hash::Hash + Clone + Debug,
+{
+    buckets: Vec<AtomicBucketItem<K, V>>,
     capacity: usize,
 }
 
-impl<K, V> ConcurrentHashMap<K, V> {
-    pub fn iter(&self) -> Iter<'_, AtomicPtr<BucketItem<K, V>>> {
-        self.buckets.iter()
+impl<'a, K, V> Iterator for ConcurrentHashMapIter<'a, K, V>
+where
+    K: Eq + std::hash::Hash + Clone + Debug,
+{
+    type Item = ExternalBucketItem<K, V>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let current_node = self.current?;
+        let node = current_node.load(Ordering::SeqCst);
+        if node.is_null() {
+            return None;
+        }
+
+        let node = unsafe { &*node };
+        let key = node.key.clone();
+        let value = node.value.clone();
+        let item = ExternalBucketItem { key, value };
+        self.current = Some(&node.next);
+
+        Some(item)
     }
 }
 
-impl<K, V> IntoIterator for ConcurrentHashMap<K, V> {
-    type Item = AtomicPtr<BucketItem<K, V>>;
-    type IntoIter = std::vec::IntoIter<Self::Item>;
+impl<K, V> AtomicBucketItem<K, V> {
+    pub fn iter(&self) -> ConcurrentHashMapIter<K, V> {
+        let bucket_item = &self.0;
+        ConcurrentHashMapIter {
+            current: Some(bucket_item),
+        }
+    }
+}
 
-    fn into_iter(self) -> Self::IntoIter {
-        self.buckets.into_iter()
+impl<'a, K, V> ConcurrentHashMap<K, V>
+where
+    K: Eq + std::hash::Hash + Clone + Debug,
+{
+    pub fn iter(&'a self) -> impl Iterator<Item = ExternalBucketItem<K, V>> + 'a {
+        self.buckets.iter().flat_map(|bucket| {
+            bucket.iter().map(|item| ExternalBucketItem {
+                key: item.key.clone(),
+                value: Arc::clone(&item.value),
+            })
+        })
     }
 }
 
@@ -44,12 +92,13 @@ impl<K, V> IntoIterator for ConcurrentHashMap<K, V> {
  */
 impl<K, V> ConcurrentHashMap<K, V>
 where
-    K: Eq + std::hash::Hash,
+    K: Eq + std::hash::Hash + Clone + Debug,
+    V: Debug,
 {
     pub fn new() -> Self {
         let mut buckets = Vec::with_capacity(INITIAL_CAPACITY);
         for _ in 0..INITIAL_CAPACITY {
-            buckets.push(AtomicPtr::new(ptr::null_mut()));
+            buckets.push(AtomicBucketItem(AtomicPtr::new(ptr::null_mut())));
         }
 
         ConcurrentHashMap {
@@ -76,7 +125,7 @@ where
         todo!()
     }
 
-    pub fn get_mut(&self, key: K) -> Option<Arc<RwLock<V>>> {
+    pub fn get_mut(&self, key: K) -> Option<BucketValue<V>> {
         todo!()
     }
 
@@ -86,10 +135,10 @@ where
      * Utilizes the atomic operation `compare_exchange` to handle the list mutations. If the `compare_exchange` operation fails it will continue to retry until it succeeds
      */
     fn insert_new_key(&self, new_bucket_item: *mut BucketItem<K, V>, index: usize) {
-        let mut head = self.buckets[index].load(Ordering::SeqCst);
+        let mut head = self.buckets[index].0.load(Ordering::SeqCst);
         loop {
             unsafe { (*new_bucket_item).next.store(head, Ordering::SeqCst) };
-            match self.buckets[index].compare_exchange(
+            match self.buckets[index].0.compare_exchange(
                 head,
                 new_bucket_item,
                 Ordering::SeqCst,
@@ -126,7 +175,7 @@ where
         index: usize,
     ) -> Result<(), ()> {
         let key = unsafe { &(*new_bucket_item).key };
-        let head = self.buckets[index].load(Ordering::SeqCst);
+        let head = self.buckets[index].0.load(Ordering::SeqCst);
         let mut prev = ptr::null_mut::<BucketItem<K, V>>();
         let mut current = head;
 
@@ -139,7 +188,7 @@ where
 
                 // If prev is equal to null it means that the key of `head` is the same as the key of new_bucket_item
                 if prev.is_null() {
-                    match self.buckets[index].compare_exchange(
+                    match self.buckets[index].0.compare_exchange(
                         head,
                         new_bucket_item,
                         Ordering::SeqCst,
@@ -186,9 +235,9 @@ where
      * We really don't want to return a reference as that's error prone and will make garbage collection much harder in the future
      * This is intentional append-only but we may need to add garbage collection in the future
      */
-    pub fn get(&self, key: &K) -> Option<Arc<RwLock<V>>> {
+    pub fn get(&self, key: &K) -> Option<BucketValue<V>> {
         let index = self.get_bucket_slot(key);
-        let mut current = self.buckets[index].load(Ordering::SeqCst);
+        let mut current = self.buckets[index].0.load(Ordering::SeqCst);
 
         while !current.is_null() {
             let node = unsafe { &*current };
@@ -265,20 +314,8 @@ fn main() {
     let key = "test".to_string();
     map_two.insert(key.clone(), "hello".to_string());
     map_two.insert("test2".to_string(), "world".to_string());
-    // map_two.print();
-    // println!("First: {:?}", map_two.get(&key));
-    // println!("Second: {:?}", map_two.get(&key));
-    // map_two.print();
 
     for b in map_two.iter() {
-        let mut current = b.load(Ordering::SeqCst);
-
-        while !current.is_null() {
-            let node = unsafe { &*current };
-            let value = node.value.read().unwrap();
-            println!("Node Key: {:#?}. Node Value: {:#?}", node.key, value);
-
-            current = node.next.load(Ordering::SeqCst);
-        }
+        println!("Node Key: {:#?}. Node Value: {:#?}", b.key, b.value);
     }
 }
