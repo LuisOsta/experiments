@@ -7,25 +7,25 @@ use std::{ptr, thread};
 
 const INITIAL_CAPACITY: usize = 16;
 
-pub struct Node<K, V> {
+pub struct BucketItem<K, V> {
     key: K,
     value: V,
-    next: AtomicPtr<Node<K, V>>,
+    next: AtomicPtr<BucketItem<K, V>>,
 }
 
 pub struct ConcurrentHashMap<K, V> {
-    buckets: Vec<AtomicPtr<Node<K, V>>>,
+    buckets: Vec<AtomicPtr<BucketItem<K, V>>>,
     capacity: usize,
 }
 
 impl<K, V> ConcurrentHashMap<K, V> {
-    pub fn iter(&self) -> Iter<'_, AtomicPtr<Node<K, V>>> {
+    pub fn iter(&self) -> Iter<'_, AtomicPtr<BucketItem<K, V>>> {
         self.buckets.iter()
     }
 }
 
 impl<K, V> IntoIterator for ConcurrentHashMap<K, V> {
-    type Item = AtomicPtr<Node<K, V>>;
+    type Item = AtomicPtr<BucketItem<K, V>>;
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -61,30 +61,30 @@ where
 
     pub fn insert(&self, key: K, value: V) {
         let index = self.get_bucket_slot(&key);
-        let new_node = Box::into_raw(Box::new(Node {
+        let new_bucket_item = Box::into_raw(Box::new(BucketItem {
             key: key,
             value,
             next: AtomicPtr::new(ptr::null_mut()),
         }));
 
-        if self.update_existing_key(new_node, index).is_err() {
-            // no current bucket item has the new_node key, so add new key via new_node
-            self.insert_new_key(new_node, index);
+        if self.update_existing_key(new_bucket_item, index).is_err() {
+            // no current bucket item has the new_bucket_item key, so add new key via new_bucket_item
+            self.insert_new_key(new_bucket_item, index);
         }
     }
 
     /**
      *
      */
-    fn insert_new_key(&self, new_node: *mut Node<K, V>, index: usize) {
+    fn insert_new_key(&self, new_bucket_item: *mut BucketItem<K, V>, index: usize) {
         let mut head = self.buckets[index].load(Ordering::SeqCst);
         loop {
             // In the case that the key value does not already exist in the linkedlist in the bucket at `index`.
-            // Then add the new_node to the front of the linkedlist and update the pointer at buckets[index]
-            unsafe { (*new_node).next.store(head, Ordering::SeqCst) };
+            // Then add the new_bucket_item to the front of the linkedlist and update the pointer at buckets[index]
+            unsafe { (*new_bucket_item).next.store(head, Ordering::SeqCst) };
             match self.buckets[index].compare_exchange(
                 head,
-                new_node,
+                new_bucket_item,
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             ) {
@@ -106,17 +106,21 @@ where
     }
 
     /**
-     * Returns Ok if a bucket item with the same key as new_node is found, otherwise returns an error if no bucket item with the same key is found.
+     * Returns Ok if a bucket item with the same key as new_bucket_item is found, otherwise returns an error if no bucket item with the same key is found.
      *
      * Gets the bucket at `index`, then iterates through the LinkedIn starting at the head of the bucket.
-     * Starts by setting a current node to `head` and then iterating to the list, trying to find any bucket item that has the same key as `new_node`
-     * If it finds a bucket item with the same key, it will use `prev` and `current` as needed to replace that bucket item with the `new_node` pointer.
+     * Starts by setting a current node to `head` and then iterating to the list, trying to find any bucket item that has the same key as `new_bucket_item`
+     * If it finds a bucket item with the same key, it will use `prev` and `current` as needed to replace that bucket item with the `new_bucket_item` pointer.
      * Utilize the atomic operation `compare_exchange` to handle the list mutations. If the `compare_exchange` operation fails it will continue to retry until it succeeds
      */
-    fn update_existing_key(&self, new_node: *mut Node<K, V>, index: usize) -> Result<(), ()> {
-        let key = unsafe { &(*new_node).key };
+    fn update_existing_key(
+        &self,
+        new_bucket_item: *mut BucketItem<K, V>,
+        index: usize,
+    ) -> Result<(), ()> {
+        let key = unsafe { &(*new_bucket_item).key };
         let head = self.buckets[index].load(Ordering::SeqCst);
-        let mut prev = ptr::null_mut::<Node<K, V>>();
+        let mut prev = ptr::null_mut::<BucketItem<K, V>>();
         let mut current = head;
 
         while !current.is_null() {
@@ -124,13 +128,13 @@ where
             let next_node = node.next.load(Ordering::SeqCst);
             if node.key.eq(&key) {
                 // Change the next value of new node
-                unsafe { (*new_node).next.store(next_node, Ordering::SeqCst) };
+                unsafe { (*new_bucket_item).next.store(next_node, Ordering::SeqCst) };
 
-                // If prev is equal to null it means that the key of `head` is the same as the key of new_node
+                // If prev is equal to null it means that the key of `head` is the same as the key of new_bucket_item
                 if prev.is_null() {
                     match self.buckets[index].compare_exchange(
                         head,
-                        new_node,
+                        new_bucket_item,
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                     ) {
@@ -142,12 +146,12 @@ where
                         }
                     }
                 } else {
-                    // Set prev.next to new_node if prev is not null.
+                    // Set prev.next to new_bucket_item if prev is not null.
                     let prev_node = unsafe { &*prev };
 
                     match prev_node.next.compare_exchange(
                         current,
-                        new_node,
+                        new_bucket_item,
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                     ) {
