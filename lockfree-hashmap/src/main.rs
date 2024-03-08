@@ -1,11 +1,13 @@
 use std::collections::HashSet;
 use std::hash::Hasher;
+use std::slice::Iter;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{ptr, thread};
+
 const INITIAL_CAPACITY: usize = 16;
 
-struct Node<K, V> {
+pub struct Node<K, V> {
     key: K,
     value: V,
     next: AtomicPtr<Node<K, V>>,
@@ -16,13 +18,29 @@ pub struct ConcurrentHashMap<K, V> {
     capacity: usize,
 }
 
+impl<K, V> ConcurrentHashMap<K, V> {
+    pub fn iter(&self) -> Iter<'_, AtomicPtr<Node<K, V>>> {
+        self.buckets.iter()
+    }
+}
+
+impl<K, V> IntoIterator for ConcurrentHashMap<K, V> {
+    type Item = AtomicPtr<Node<K, V>>;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.buckets.into_iter()
+    }
+}
+
 /**
  * Things we need to support:
  * * Resizing (to deal with bucket lengths getting too long and which will cause hash collisions)
- * * Garbage collection
- * * Unique enforcement
+ * * Garbage collection ( This and the above will require keeping track of writers and readers)
+ * * Unique enforcement - Done
+ * * Iterable support
+ * * Internal mutability support
  *
- * All of this will require keeping track of writers and readers
  */
 impl<K, V> ConcurrentHashMap<K, V>
 where
