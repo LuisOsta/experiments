@@ -1,3 +1,6 @@
+mod bucket;
+
+use bucket::*;
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hasher;
@@ -17,63 +20,12 @@ use std::{ptr, thread};
 
 const INITIAL_CAPACITY: usize = 16;
 
-type BucketValue<V> = Arc<RwLock<V>>;
-struct AtomicBucketItem<K, V>(AtomicPtr<BucketItem<K, V>>);
-
-#[derive(Debug)]
-struct BucketItem<K, V> {
-    key: K,
-    value: BucketValue<V>,
-    next: AtomicPtr<BucketItem<K, V>>,
-}
-
-pub struct ExternalBucketItem<K, V> {
-    key: K,
-    value: BucketValue<V>,
-}
-
-pub struct ConcurrentHashMapIter<'a, K, V> {
-    current: Option<&'a AtomicPtr<BucketItem<K, V>>>,
-}
-
 pub struct ConcurrentHashMap<K, V>
 where
     K: Eq + std::hash::Hash + Clone + Debug,
 {
     buckets: Vec<AtomicBucketItem<K, V>>,
     capacity: usize,
-}
-
-impl<'a, K, V> Iterator for ConcurrentHashMapIter<'a, K, V>
-where
-    K: Eq + std::hash::Hash + Clone + Debug,
-{
-    type Item = ExternalBucketItem<K, V>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let current_node = self.current?;
-        let node = current_node.load(Ordering::SeqCst);
-        if node.is_null() {
-            return None;
-        }
-
-        let node = unsafe { &*node };
-        let key = node.key.clone();
-        let value = node.value.clone();
-        let item = ExternalBucketItem { key, value };
-        self.current = Some(&node.next);
-
-        Some(item)
-    }
-}
-
-impl<K, V> AtomicBucketItem<K, V> {
-    pub fn iter(&self) -> ConcurrentHashMapIter<K, V> {
-        let bucket_item = &self.0;
-        ConcurrentHashMapIter {
-            current: Some(bucket_item),
-        }
-    }
 }
 
 impl<'a, K, V> ConcurrentHashMap<K, V>
@@ -93,7 +45,6 @@ where
 impl<K, V> ConcurrentHashMap<K, V>
 where
     K: Eq + std::hash::Hash + Clone + Debug,
-    V: Debug,
 {
     pub fn new() -> Self {
         let mut buckets = Vec::with_capacity(INITIAL_CAPACITY);
@@ -122,10 +73,6 @@ where
     }
 
     pub fn remove(&self, _key: K) {
-        todo!()
-    }
-
-    pub fn get_mut(&self, _key: K) -> Option<BucketValue<V>> {
         todo!()
     }
 
