@@ -44,8 +44,7 @@ impl<K, V> IntoIterator for ConcurrentHashMap<K, V> {
  */
 impl<K, V> ConcurrentHashMap<K, V>
 where
-    K: Eq + std::hash::Hash + std::fmt::Debug,
-    V: std::fmt::Debug,
+    K: Eq + std::hash::Hash,
 {
     pub fn new() -> Self {
         let mut buckets = Vec::with_capacity(INITIAL_CAPACITY);
@@ -213,19 +212,6 @@ where
         let hash = self.hash(&key);
         return hash % self.capacity;
     }
-
-    pub fn print(&self) {
-        for bucket in self.buckets.iter() {
-            let mut current = bucket.load(Ordering::SeqCst);
-
-            while !current.is_null() {
-                let node = unsafe { &*current };
-                println!("Node Key: {:#?}. Node Value: {:#?}", node.key, node.value);
-
-                current = node.next.load(Ordering::SeqCst);
-            }
-        }
-    }
 }
 
 fn main() {
@@ -278,9 +264,21 @@ fn main() {
 
     let key = "test".to_string();
     map_two.insert(key.clone(), "hello".to_string());
-    map_two.print();
-    println!("First: {:?}", map_two.get(&key));
-    map_two.insert(key.clone(), "world".to_string());
-    println!("Second: {:?}", map_two.get(&key));
-    map_two.print();
+    map_two.insert("test2".to_string(), "world".to_string());
+    // map_two.print();
+    // println!("First: {:?}", map_two.get(&key));
+    // println!("Second: {:?}", map_two.get(&key));
+    // map_two.print();
+
+    for b in map_two.iter() {
+        let mut current = b.load(Ordering::SeqCst);
+
+        while !current.is_null() {
+            let node = unsafe { &*current };
+            let value = node.value.read().unwrap();
+            println!("Node Key: {:#?}. Node Value: {:#?}", node.key, value);
+
+            current = node.next.load(Ordering::SeqCst);
+        }
+    }
 }
