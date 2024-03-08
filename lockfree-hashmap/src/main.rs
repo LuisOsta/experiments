@@ -120,11 +120,11 @@ where
         }
     }
 
-    pub fn remove(&self, key: K) {
+    pub fn remove(&self, _key: K) {
         todo!()
     }
 
-    pub fn get_mut(&self, key: K) -> Option<BucketValue<V>> {
+    pub fn get_mut(&self, _key: K) -> Option<BucketValue<V>> {
         todo!()
     }
 
