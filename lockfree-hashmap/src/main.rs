@@ -68,4 +68,13 @@ fn main() {
     for b in map_two.iter() {
         println!("Node Key: {:#?}. Node Value: {:#?}", b.key, b.value);
     }
+
+    map_two.remove("test2".to_string());
+
+    assert!(map_two.get(&"test2".to_string()).is_none());
+
+    println!("\n\n");
+    for b in map_two.iter() {
+        println!("Node Key: {:#?}. Node Value: {:#?}", b.key, b.value);
+    }
 }

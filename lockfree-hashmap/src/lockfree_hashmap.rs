@@ -1,11 +1,14 @@
 mod bucket;
 
-use bucket::*;
 use std::fmt::Debug;
 use std::hash::Hasher;
 use std::ptr;
-use std::sync::atomic::{AtomicPtr, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::AtomicPtr;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::sync::RwLock;
+
+use bucket::*;
 
 /**
  * Things we need to support:
@@ -14,10 +17,11 @@ use std::sync::{Arc, RwLock};
  * * Unique enforcement - Done
  * * Iterable support - Done
  * * Internal mutability support - Done
+ * * Support remove operation - Done
  *
  */
 
-const INITIAL_CAPACITY: usize = 16;
+const INITIAL_CAPACITY: usize = 64;
 
 pub struct ConcurrentHashMap<K, V>
 where
@@ -67,8 +71,9 @@ where
     }
 
     /**
-     *
-     */
+      Inserts an element associated with the given key with the provided value into the concurrent hash map. It uses atomic `compare_exchange` operations to allow thread safe concurrent usage.
+      If the key already exists it will replace the existing value with the value provided
+    */
     pub fn insert(&self, key: K, value: V) {
         let index = self.get_bucket_slot(&key);
         let new_bucket_item = Box::into_raw(Box::new(BucketItem {
@@ -84,10 +89,61 @@ where
     }
 
     /**
-     *
-     */
-    pub fn remove(&self, _key: K) {
-        todo!()
+      Removes the element associated with the given key from the concurrent hash map. It uses atomic `compare_exchange` operations to allow thread safe concurrent usage.
+    */
+    pub fn remove(&self, key: K) {
+        let index = self.get_bucket_slot(&key);
+
+        let head = self.buckets[index].0.load(Ordering::SeqCst);
+        let mut prev = ptr::null_mut::<BucketItem<K, V>>();
+        let mut current = head;
+
+        while !current.is_null() {
+            let node = unsafe { &*current };
+            let next_node = node.next.load(Ordering::SeqCst);
+            if node.key.eq(&key) {
+                // If prev is equal to null it means that the key of `head` is the same as the key of new_bucket_item
+                if prev.is_null() {
+                    // Set buckets[index] equal to next_node
+                    match self.buckets[index].0.compare_exchange(
+                        current,
+                        next_node,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    ) {
+                        Ok(_) => return, // Successfully inserted
+                        Err(new_head) => {
+                            // The value in buckets[index] was updated in between the load and compare_exchange and you must restart
+                            current = new_head;
+                            continue;
+                        }
+                    }
+                } else {
+                    //set prev.next equal to next_node
+                    // deletion in place
+                    // Set prev.next to new_bucket_item if prev is not null.
+                    let raw_prev = unsafe { &*prev };
+
+                    match raw_prev.next.compare_exchange(
+                        current,
+                        next_node,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    ) {
+                        Ok(_) => return, // Successfully inserted
+                        Err(actual_next) => {
+                            // actual_next is what the pointer for the element after the previous bucket item is in reality (`current` was incorrect)
+                            // The value in buckets[index] was updated in between the load and compare_exchange and you must restart
+                            current = actual_next;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            prev = current;
+            current = node.next.load(Ordering::SeqCst);
+        }
     }
 
     /**
@@ -221,5 +277,78 @@ where
     fn get_bucket_slot(&self, key: &K) -> usize {
         let hash = self.hash(&key);
         return hash % self.capacity;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_insert_new_key() {
+        let map = ConcurrentHashMap::default();
+        let key = "test2".to_string();
+        let value = "hello".to_string();
+        map.insert(key.clone(), value.clone());
+
+        if let Some(retrieved_value) = map.get(&key) {
+            let retrieved_value = retrieved_value.read().unwrap();
+            let retrieved_value = retrieved_value.clone();
+            assert_eq!(value, retrieved_value);
+        } else {
+            assert!(
+                false,
+                "Test failed. Could not find any value associated with the key that was utilized"
+            )
+        }
+    }
+
+    #[test]
+    fn test_insert_existing_key() {
+        //
+        let map = ConcurrentHashMap::default();
+        let key = "test2".to_string();
+        let value = "hello".to_string();
+        let value_two = "world".to_string();
+        map.insert(key.clone(), value.clone());
+
+        if let Some(retrieved_value) = map.get(&key) {
+            let retrieved_value = retrieved_value.read().unwrap();
+            let retrieved_value = retrieved_value.clone();
+            assert_eq!(value, retrieved_value);
+        } else {
+            assert!(
+                false,
+                "Test failed. Could not find any value associated with the key that was utilized"
+            )
+        }
+
+        map.insert(key.clone(), value_two.clone());
+
+        if let Some(retrieved_value) = map.get(&key) {
+            let retrieved_value = retrieved_value.read().unwrap();
+            let retrieved_value = retrieved_value.clone();
+            assert_eq!(value_two, retrieved_value);
+        } else {
+            assert!(
+                false,
+                "Test failed. Could not find any value associated with the key that was utilized"
+            )
+        }
+    }
+
+    #[test]
+    fn test_iteration() {
+        // panic!("Lockfree HashMap Insert Test Not Implemented")
+    }
+
+    #[test]
+    fn test_remove() {
+        // panic!("Lockfree HashMap Insert Test Not Implemented")
+    }
+
+    #[test]
+    fn test_remove_fails_due_to_non_existance() {
+        // panic!("Lockfree HashMap Insert Test Not Implemented")
     }
 }
